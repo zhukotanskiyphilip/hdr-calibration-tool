@@ -10,9 +10,10 @@ namespace HdrScope;
 public sealed class MainForm : Form
 {
     private readonly Label _liveStatus = new() { Dock = DockStyle.Top, Height = 26, Font = new Font("Consolas", 9, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
+    private readonly Label _calibStatus = new() { Dock = DockStyle.Top, Height = 40, Font = new Font("Consolas", 8.5f), TextAlign = ContentAlignment.MiddleLeft, ForeColor = System.Drawing.Color.DimGray };
     private readonly Button _wizardBtn = new() { Text = "▶ МАЙСТЕР КАЛІБРУВАННЯ (12 кроків, ~10 хв)", Dock = DockStyle.Top, Height = 44, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
-    private readonly Button _competBtn = new() { Text = "★ HDR: ПІДНЯТІ ТІНІ — для ігор", Dock = DockStyle.Top, Height = 36 };
-    private readonly Button _accurateBtn = new() { Text = "HDR: ТОЧНИЙ — як відкалібровано", Dock = DockStyle.Top, Height = 36 };
+    private readonly Button _competBtn = new() { Text = "★ HDR: ПІДНЯТІ ТІНІ — для ігор (числа з останньої калібровки)", Dock = DockStyle.Top, Height = 36 };
+    private readonly Button _accurateBtn = new() { Text = "HDR: ТОЧНИЙ — пік/чорний з останньої калібровки", Dock = DockStyle.Top, Height = 36 };
     private readonly Button _sdrBtn = new() { Text = "SDR: профіль монітора (для color-managed програм)", Dock = DockStyle.Top, Height = 36 };
     private readonly Button _restartHdrBtn = new() { Text = "Перезапустити HDR", Dock = DockStyle.Top, Height = 30 };
     private readonly TextBox _log = new() { Multiline = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 9) };
@@ -44,6 +45,7 @@ public sealed class MainForm : Form
         };
         _statusTimer.Tick += (_, _) => UpdateLiveStatus();
         _statusTimer.Start();
+        RefreshCalibSummary();
         UpdateLiveStatus();
 
         var tips = new ToolTip { AutoPopDelay = 30000, InitialDelay = 300, ReshowDelay = 100 };
@@ -74,6 +76,7 @@ public sealed class MainForm : Form
         Controls.Add(_accurateBtn);
         Controls.Add(_competBtn);
         Controls.Add(_wizardBtn);
+        Controls.Add(_calibStatus);
         Controls.Add(_liveStatus);
 
         Load += (_, _) =>
@@ -98,6 +101,49 @@ public sealed class MainForm : Form
             ? $"HDR: УВІМКНЕНО ✓  {acs.BitsPerColorChannel}-bit  SDR white: {acs.SdrWhiteLevelNits:F0} nits"
             : "HDR: ВИМКНЕНО — SDR-режим (монітор працює на власній калібровці)";
         _liveStatus.ForeColor = acs.Enabled ? System.Drawing.Color.DarkGreen : System.Drawing.Color.DarkSlateGray;
+
+        string hdrProfile = FriendlyProfileName(Color.ProfileInstaller.GetDefaultProfileName(acs.AdapterId, acs.SourceId, advanced: true));
+        string sdrProfile = FriendlyProfileName(Color.ProfileInstaller.GetDefaultProfileName(acs.AdapterId, acs.SourceId, advanced: false));
+        _calibStatus.Text =
+            $"Калібровка: {_calibSummary}\r\n" +
+            $"Профілі: HDR-слот = {hdrProfile}   SDR-слот = {sdrProfile}";
+    }
+
+    private string _calibSummary = "—";
+
+    private static string FriendlyProfileName(string? fileName) => fileName switch
+    {
+        null or "" => "(не призначено)",
+        "HdrScope-G2724D-competitive.icm" => "ПІДНЯТІ ТІНІ ★",
+        "HdrScope-G2724D-accurate.icm" => "ТОЧНИЙ",
+        "HdrScope-G2724D-neutral.icm" => "ТОЧНИЙ (стара назва neutral)",
+        "HdrScope-G2724D-gamma22fix.icm" => "gamma2.2-fix",
+        "HdrScope-G2724D-SDR.icm" => "SDR-профіль монітора",
+        _ => fileName,
+    };
+
+    private void RefreshCalibSummary()
+    {
+        var lastSession = Directory.GetFiles(_outDir, "session-*.json")
+            .OrderByDescending(f => f).FirstOrDefault();
+        if (lastSession is null) { _calibSummary = "сесій немає — пройдіть майстер"; return; }
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(lastSession));
+            double maxL = 450, minL = 0.05;
+            if (doc.RootElement.TryGetProperty("Conclusions", out var c))
+            {
+                if (c.TryGetProperty("maxTML_nits", out var mx)) maxL = mx.GetDouble();
+                if (c.TryGetProperty("minTML_nits", out var mn)) minL = mn.GetDouble();
+            }
+            var started = doc.RootElement.TryGetProperty("StartedUtc", out var st) && st.TryGetDateTime(out var dt)
+                ? dt.ToLocalTime().ToString("dd.MM.yyyy HH:mm") : "?";
+            _calibSummary = $"сесія {started} • пік {maxL:F0} nits • чорний {minL:F3} nits";
+        }
+        catch
+        {
+            _calibSummary = Path.GetFileName(lastSession);
+        }
     }
 
     private (double maxL, double minL) ReadLastSession()
@@ -240,6 +286,8 @@ public sealed class MainForm : Form
         {
             Log($"Сесію калібрування збережено: {Path.GetFileName(session.JsonPath)}");
             Log("Передайте цей JSON Claude для аналізу.");
+            RefreshCalibSummary();
+            UpdateLiveStatus();
         };
         wizard.Show(this);
     }

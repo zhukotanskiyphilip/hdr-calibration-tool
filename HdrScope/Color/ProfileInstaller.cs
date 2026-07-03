@@ -20,6 +20,46 @@ public static class ProfileInstaller
         [MarshalAs(UnmanagedType.Bool)] bool setAsDefault,
         [MarshalAs(UnmanagedType.Bool)] bool associateAsAdvancedColor);
 
+    private enum COLORPROFILETYPE { CPT_ICC = 0 }
+    private enum COLORPROFILESUBTYPE { CPST_STANDARD_DISPLAY_COLOR_MODE = 4, CPST_EXTENDED_DISPLAY_COLOR_MODE = 5 }
+
+    [DllImport("mscms.dll", CharSet = CharSet.Unicode)]
+    private static extern int ColorProfileGetDisplayDefault(
+        WCS_PROFILE_MANAGEMENT_SCOPE scope,
+        Interop.LuidValue targetAdapterID,
+        uint sourceID,
+        COLORPROFILETYPE profileType,
+        COLORPROFILESUBTYPE profileSubType,
+        out IntPtr profileName);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr hMem);
+
+    /// <summary>Returns the file name of the current default display profile (HDR slot if advanced=true), or null.</summary>
+    public static string? GetDefaultProfileName(Interop.LuidValue adapterId, uint sourceId, bool advanced)
+    {
+        var subtype = advanced
+            ? COLORPROFILESUBTYPE.CPST_EXTENDED_DISPLAY_COLOR_MODE
+            : COLORPROFILESUBTYPE.CPST_STANDARD_DISPLAY_COLOR_MODE;
+        foreach (var scope in new[] { WCS_PROFILE_MANAGEMENT_SCOPE.CURRENT_USER, WCS_PROFILE_MANAGEMENT_SCOPE.SYSTEM_WIDE })
+        {
+            try
+            {
+                if (ColorProfileGetDisplayDefault(scope, adapterId, sourceId, COLORPROFILETYPE.CPT_ICC, subtype, out IntPtr p) == 0 && p != IntPtr.Zero)
+                {
+                    string? name = Marshal.PtrToStringUni(p);
+                    LocalFree(p);
+                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                }
+            }
+            catch
+            {
+                // API missing on older builds — status just shows unknown.
+            }
+        }
+        return null;
+    }
+
     /// <summary>
     /// Installs the .icm into the system color store and associates it with the display
     /// as an advanced-color (HDR) profile for the current user, set as default.
