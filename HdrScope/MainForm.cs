@@ -17,8 +17,9 @@ public sealed class MainForm : Form
     private readonly TextBox _nitsBox = new() { Dock = DockStyle.Top, Text = "1,2,4,10,25,50,100,203,300,400,500" };
     private readonly Button _statusBtn = new() { Text = "Оновити стан HDR", Dock = DockStyle.Top };
     private readonly Button _wizardBtn = new() { Text = "▶ МАЙСТЕР КАЛІБРУВАННЯ (12 кроків, ~10 хв)", Dock = DockStyle.Top, Height = 40, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
-    private readonly Button _genFixBtn = new() { Text = "Створити і встановити HDR-профіль gamma2.2-fix (з останньої сесії)", Dock = DockStyle.Top, Height = 32 };
-    private readonly Button _genNeutralBtn = new() { Text = "Створити і встановити HDR-профіль neutral (для порівняння)", Dock = DockStyle.Top, Height = 28 };
+    private readonly Button _genCompetBtn = new() { Text = "★ Профіль COMPETITIVE — підйом тіней для HDR-ігор", Dock = DockStyle.Top, Height = 32 };
+    private readonly Button _genFixBtn = new() { Text = "Профіль gamma2.2-fix — якщо сидите на десктопі з увімкненим HDR", Dock = DockStyle.Top, Height = 28 };
+    private readonly Button _genNeutralBtn = new() { Text = "Профіль neutral — без корекцій, тільки чесний пік для ігор", Dock = DockStyle.Top, Height = 28 };
     private readonly Button _openHdrSettingsBtn = new() { Text = "Відкрити налаштування Windows HDR (повзунок SDR → 31)", Dock = DockStyle.Top, Height = 28 };
     private readonly Button _restartHdrBtn = new() { Text = "Перезапустити HDR (застосувати профіль)", Dock = DockStyle.Top, Height = 28 };
     private readonly Label _liveStatus = new() { Dock = DockStyle.Top, Height = 24, Font = new Font("Consolas", 9, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
@@ -46,8 +47,9 @@ public sealed class MainForm : Form
 
         _statusBtn.Click += (_, _) => RefreshStatus();
         _wizardBtn.Click += (_, _) => StartWizard();
-        _genFixBtn.Click += (_, _) => GenerateFromLastSession(gammaFix: true);
-        _genNeutralBtn.Click += (_, _) => GenerateFromLastSession(gammaFix: false);
+        _genCompetBtn.Click += (_, _) => GenerateFromLastSession(ProfileMode.Competitive);
+        _genFixBtn.Click += (_, _) => GenerateFromLastSession(ProfileMode.GammaFix);
+        _genNeutralBtn.Click += (_, _) => GenerateFromLastSession(ProfileMode.Neutral);
         _showBtn.Click += (_, _) => ShowPattern();
         _captureBtn.Click += (_, _) => CaptureAndAnalyze();
 
@@ -82,15 +84,19 @@ public sealed class MainForm : Form
             "ГОЛОВНА КНОПКА. 12 візуальних тестів (~10 хв): пік яскравості, чорний,\n" +
             "градації, гамма, контраст. Результати зберігаються в JSON —\n" +
             "його можна віддати Claude для аналізу.");
+        tips.SetToolTip(_genCompetBtn,
+            "ДЛЯ ЗМАГАЛЬНИХ ІГОР. Підіймає тіні в HDR-режимі (0–25 ніт) — програмний аналог\n" +
+            "Dark Stabilizer, який в HDR заблокований в OSD. Плюс чесний пік 576 для тонмапера гри.\n" +
+            "Ваш робочий цикл: HDR увімкнено = цей профіль діє (ігри), HDR вимкнено = профіль\n" +
+            "не застосовується взагалі, SDR-десктоп працює на нативній гаммі монітора.");
         tips.SetToolTip(_genFixBtn,
-            "РЕКОМЕНДОВАНИЙ ПРОФІЛЬ. Бере результати останнього майстра і встановлює\n" +
-            "ICC-профіль, який: 1) виправляє вицвілий SDR-контент у HDR-режимі (гамма-фікс),\n" +
-            "2) повідомляє іграм ваш реальний пік/чорний (565 / 0.05 ніт).\n" +
-            "HDR має бути УВІМКНЕНИЙ. Повторюйте після зміни повзунка SDR-яскравості.");
+            "Потрібен ТІЛЬКИ якщо ви сидите на десктопі/дивитесь SDR-відео з увімкненим HDR:\n" +
+            "виправляє вицвілі тіні SDR-контенту в HDR-режимі. Побічний ефект: трохи темнить\n" +
+            "тіні HDR-ігор. Якщо ви вимикаєте HDR поза іграми (Win+Alt+B) — він вам не потрібен.\n" +
+            "Повторюйте після зміни повзунка SDR-яскравості.");
         tips.SetToolTip(_genNeutralBtn,
-            "Альтернатива для порівняння: той самий профіль, але БЕЗ гамма-фіксу —\n" +
-            "тільки коректні пік/чорний для ігор. Встановіть, якщо з gamma2.2-fix\n" +
-            "щось не подобається (наприклад, тіні у HDR-фільмах стали затемними).\n" +
+            "Базовий варіант: жодних корекцій кривої, тільки коректні пік/чорний для ігор\n" +
+            "(це те, що читають ігри через DXGI і autodetect). Максимальна точність HDR «як є».\n" +
             "Останній встановлений профіль стає активним.");
         tips.SetToolTip(_nitsBox,
             "Рівні яскравості (в нітах) для діагностичних колонок нижче.\n" +
@@ -118,9 +124,10 @@ public sealed class MainForm : Form
         Controls.Add(_nitsBox);
         Controls.Add(new Label { Text = "Цільові рівні (ніт), через кому:", Dock = DockStyle.Top, Height = 20 });
         Controls.Add(_genNeutralBtn);
+        Controls.Add(_genFixBtn);
         Controls.Add(_restartHdrBtn);
         Controls.Add(_openHdrSettingsBtn);
-        Controls.Add(_genFixBtn);
+        Controls.Add(_genCompetBtn);
         Controls.Add(_wizardBtn);
         Controls.Add(_statusBtn);
         Controls.Add(_liveStatus);
@@ -174,7 +181,9 @@ public sealed class MainForm : Form
 
     private Screen SelectedScreen => Screen.AllScreens[_screenCombo.SelectedIndex];
 
-    private void GenerateFromLastSession(bool gammaFix)
+    public enum ProfileMode { GammaFix, Neutral, Competitive }
+
+    private void GenerateFromLastSession(ProfileMode mode)
     {
         try
         {
@@ -208,12 +217,20 @@ public sealed class MainForm : Form
             var edid = Interop.Edid.ReadForMonitor("DELD175") ?? Interop.Edid.ReadForMonitor("DEL");
             var spec = new Color.Mhc2ProfileSpec
             {
-                Description = gammaFix
-                    ? $"HdrScope G2724D HDR gamma2.2 fix (W={w:F0} peak={maxL:F0})"
-                    : $"HdrScope G2724D HDR neutral (peak={maxL:F0})",
+                Description = mode switch
+                {
+                    ProfileMode.GammaFix => $"HdrScope G2724D HDR gamma2.2 fix (W={w:F0} peak={maxL:F0})",
+                    ProfileMode.Competitive => $"HdrScope G2724D HDR competitive shadow-lift (peak={maxL:F0})",
+                    _ => $"HdrScope G2724D HDR neutral (peak={maxL:F0})",
+                },
                 MinLuminanceNits = minL,
                 MaxLuminanceNits = maxL,
-                RegammaLut = gammaFix ? Color.Tf.BuildSdrGammaFixLut(4096, w) : null,
+                RegammaLut = mode switch
+                {
+                    ProfileMode.GammaFix => Color.Tf.BuildSdrGammaFixLut(4096, w),
+                    ProfileMode.Competitive => Color.Tf.BuildShadowLiftLut(4096, kneeNits: 25, strength: 0.75),
+                    _ => null,
+                },
                 RedPrimary = edid?.Red ?? (0.640, 0.330),
                 GreenPrimary = edid?.Green ?? (0.300, 0.600),
                 BluePrimary = edid?.Blue ?? (0.150, 0.060),
@@ -221,7 +238,12 @@ public sealed class MainForm : Form
                 LumiNits = w,
             };
 
-            string name = gammaFix ? "HdrScope-G2724D-gamma22fix.icm" : "HdrScope-G2724D-neutral.icm";
+            string name = mode switch
+            {
+                ProfileMode.GammaFix => "HdrScope-G2724D-gamma22fix.icm",
+                ProfileMode.Competitive => "HdrScope-G2724D-competitive.icm",
+                _ => "HdrScope-G2724D-neutral.icm",
+            };
             string path = Path.Combine(_outDir, name);
             Color.Mhc2IccWriter.Write(path, spec);
             Log($"Профіль записано: {path} (SDR white = {w:F0} nits)");
@@ -233,7 +255,12 @@ public sealed class MainForm : Form
             Application.DoEvents();
             bool restarted = Interop.AdvancedColorInfo.RestartHdr();
             Log(restarted
-                ? "✓ Готово. SDR-контент у HDR-режимі має стати контрастнішим у тінях — порівняйте будь-який сайт."
+                ? mode switch
+                {
+                    ProfileMode.GammaFix => "✓ Готово. SDR-контент у HDR-режимі має стати контрастнішим у тінях — порівняйте будь-який сайт.",
+                    ProfileMode.Competitive => "✓ Готово. Тіні в HDR-іграх підняті (як Dark Stabilizer). В грі: peak 575, exposure 1.0.",
+                    _ => "✓ Готово. Профіль neutral активний: чесний пік для ігор, без корекцій кривої.",
+                }
                 : "Перезапуск через API не вдався — натисніть Win+Alt+B двічі вручну.");
             Log("ВАЖЛИВО: якщо зміните повзунок 'SDR content brightness' — натисніть цю кнопку ще раз (LUT прив'язана до рівня).");
         }

@@ -73,6 +73,27 @@ public static class Tf
         return lut;
     }
 
+    /// <summary>
+    /// Competitive shadow-lift LUT (PQ domain): below kneeNits applies a power
+    /// curve (strength &lt; 1 brightens shadows), identity above. A software
+    /// equivalent of the monitor's "Dark Stabilizer" for HDR mode, where the
+    /// OSD control is locked.
+    /// </summary>
+    public static double[] BuildShadowLiftLut(int size, double kneeNits = 25, double strength = 0.75)
+    {
+        var lut = new double[size];
+        for (int i = 0; i < size; i++)
+        {
+            double pqIn = (double)i / (size - 1);
+            double nits = PqToNits(pqIn);
+            double nitsOut = nits < kneeNits
+                ? kneeNits * Math.Pow(nits / kneeNits, strength)
+                : nits;
+            lut[i] = NitsToPq(nitsOut);
+        }
+        return lut;
+    }
+
     public static double[] BuildIdentityLut(int size)
     {
         var lut = new double[size];
