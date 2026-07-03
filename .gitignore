@@ -1,0 +1,14 @@
+# Build artifacts
+bin/
+obj/
+dist/
+*.user
+
+# Self-test outputs
+selftest-*.png
+selftest-*.txt
+selftest-*.icm
+
+# IDE
+.vs/
+.idea/
