@@ -1,227 +1,151 @@
 using System;
-using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
-using HdrScope.Analysis;
-using HdrScope.Capture;
 using HdrScope.Interop;
-using HdrScope.Rendering;
 
 namespace HdrScope;
 
 public sealed class MainForm : Form
 {
-    private readonly ComboBox _screenCombo = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top };
-    private readonly TextBox _nitsBox = new() { Dock = DockStyle.Top, Text = "1,2,4,10,25,50,100,203,300,400,500" };
-    private readonly Button _statusBtn = new() { Text = "Оновити стан HDR", Dock = DockStyle.Top };
-    private readonly Button _wizardBtn = new() { Text = "▶ МАЙСТЕР КАЛІБРУВАННЯ (12 кроків, ~10 хв)", Dock = DockStyle.Top, Height = 40, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
-    private readonly Button _genCompetBtn = new() { Text = "★ Профіль COMPETITIVE — підйом тіней для HDR-ігор", Dock = DockStyle.Top, Height = 32 };
-    private readonly Button _genFixBtn = new() { Text = "Профіль gamma2.2-fix — якщо сидите на десктопі з увімкненим HDR", Dock = DockStyle.Top, Height = 28 };
-    private readonly Button _genNeutralBtn = new() { Text = "Профіль neutral — без корекцій, тільки чесний пік для ігор", Dock = DockStyle.Top, Height = 28 };
-    private readonly Button _openHdrSettingsBtn = new() { Text = "Відкрити налаштування Windows HDR (повзунок SDR → 31)", Dock = DockStyle.Top, Height = 28 };
-    private readonly Button _restartHdrBtn = new() { Text = "Перезапустити HDR (застосувати профіль)", Dock = DockStyle.Top, Height = 28 };
-    private readonly Label _liveStatus = new() { Dock = DockStyle.Top, Height = 24, Font = new Font("Consolas", 9, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
-    private readonly System.Windows.Forms.Timer _statusTimer = new() { Interval = 2000 };
-    private readonly Button _showBtn = new() { Text = "Діагностика: показати тестові патчі", Dock = DockStyle.Top };
-    private readonly Button _captureBtn = new() { Text = "Діагностика: захопити і проаналізувати", Dock = DockStyle.Top };
+    private readonly Label _liveStatus = new() { Dock = DockStyle.Top, Height = 26, Font = new Font("Consolas", 9, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
+    private readonly Button _wizardBtn = new() { Text = "▶ МАЙСТЕР КАЛІБРУВАННЯ (12 кроків, ~10 хв)", Dock = DockStyle.Top, Height = 44, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
+    private readonly Button _competBtn = new() { Text = "★ HDR: ПІДНЯТІ ТІНІ — для ігор", Dock = DockStyle.Top, Height = 36 };
+    private readonly Button _accurateBtn = new() { Text = "HDR: ТОЧНИЙ — як відкалібровано", Dock = DockStyle.Top, Height = 36 };
+    private readonly Button _sdrBtn = new() { Text = "SDR: профіль монітора (для color-managed програм)", Dock = DockStyle.Top, Height = 36 };
+    private readonly Button _restartHdrBtn = new() { Text = "Перезапустити HDR", Dock = DockStyle.Top, Height = 30 };
     private readonly TextBox _log = new() { Multiline = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 9) };
-    private readonly DataGridView _grid = new() { Dock = DockStyle.Bottom, Height = 220, ReadOnly = true, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
+    private readonly System.Windows.Forms.Timer _statusTimer = new() { Interval = 2000 };
 
-    private PatternForm? _patternForm;
     private readonly string _outDir;
 
     public MainForm()
     {
-        Text = "HdrScope — діагностика HDR-сигналу";
-        Width = 900;
-        Height = 800;
+        Text = "HdrScope — калібрування Dell G2724D";
+        Width = 640;
+        Height = 560;
 
         _outDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "HdrScope-Results");
         Directory.CreateDirectory(_outDir);
 
-        foreach (var s in Screen.AllScreens)
-            _screenCombo.Items.Add($"{s.DeviceName}  {s.Bounds.Width}x{s.Bounds.Height} @ ({s.Bounds.X},{s.Bounds.Y}){(s.Primary ? "  [основний]" : "")}");
-        if (_screenCombo.Items.Count > 0) _screenCombo.SelectedIndex = 0;
-
-        _statusBtn.Click += (_, _) => RefreshStatus();
         _wizardBtn.Click += (_, _) => StartWizard();
-        _genCompetBtn.Click += (_, _) => GenerateFromLastSession(ProfileMode.Competitive);
-        _genFixBtn.Click += (_, _) => GenerateFromLastSession(ProfileMode.GammaFix);
-        _genNeutralBtn.Click += (_, _) => GenerateFromLastSession(ProfileMode.Neutral);
-        _showBtn.Click += (_, _) => ShowPattern();
-        _captureBtn.Click += (_, _) => CaptureAndAnalyze();
-
-        _openHdrSettingsBtn.Click += (_, _) =>
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = "ms-settings:display-hdr", UseShellExecute = true });
-            Log("Відкрито налаштування Windows. Знайдіть повзунок «Яскравість вмісту SDR», поставте 31 (=204 nits).");
-            Log("Значення в рядку статусу вгорі оновиться автоматично, коли повзунок стане на місце.");
-        };
+        _competBtn.Click += (_, _) => GenerateHdrProfile(ProfileMode.Competitive);
+        _accurateBtn.Click += (_, _) => GenerateHdrProfile(ProfileMode.Neutral);
+        _sdrBtn.Click += (_, _) => GenerateSdrProfile();
         _restartHdrBtn.Click += (_, _) =>
         {
             Log("Перезапускаю HDR (екран блимне двічі)...");
             _restartHdrBtn.Enabled = false;
             Application.DoEvents();
-            bool ok = Interop.AdvancedColorInfo.RestartHdr();
+            bool ok = AdvancedColorInfo.RestartHdr();
             _restartHdrBtn.Enabled = true;
-            Log(ok ? "HDR перезапущено — профіль застосовано." : "Не вдалося перезапустити HDR через API. Скористайтесь Win+Alt+B двічі.");
+            Log(ok ? "HDR перезапущено." : "Не вдалося через API — натисніть Win+Alt+B двічі.");
         };
         _statusTimer.Tick += (_, _) => UpdateLiveStatus();
         _statusTimer.Start();
         UpdateLiveStatus();
 
         var tips = new ToolTip { AutoPopDelay = 30000, InitialDelay = 300, ReshowDelay = 100 };
-        tips.SetToolTip(_screenCombo,
-            "На якому моніторі показувати тести і який калібрувати.\n" +
-            "У вас один монітор — залиште як є.");
-        tips.SetToolTip(_statusBtn,
-            "Показує поточний стан HDR у Windows: чи увімкнено, глибину кольору (біт),\n" +
-            "тип сигналу (RGB/YCbCr) і рівень 'SDR content brightness' у нітах.\n" +
-            "Корисно після зміни повзунка яскравості SDR — щоб побачити нове значення.");
         tips.SetToolTip(_wizardBtn,
-            "ГОЛОВНА КНОПКА. 12 візуальних тестів (~10 хв): пік яскравості, чорний,\n" +
-            "градації, гамма, контраст. Результати зберігаються в JSON —\n" +
-            "його можна віддати Claude для аналізу.");
-        tips.SetToolTip(_genCompetBtn,
-            "ДЛЯ ЗМАГАЛЬНИХ ІГОР. Підіймає тіні в HDR-режимі (0–25 ніт) — програмний аналог\n" +
-            "Dark Stabilizer, який в HDR заблокований в OSD. Плюс чесний пік 576 для тонмапера гри.\n" +
-            "Ваш робочий цикл: HDR увімкнено = цей профіль діє (ігри), HDR вимкнено = профіль\n" +
-            "не застосовується взагалі, SDR-десктоп працює на нативній гаммі монітора.");
-        tips.SetToolTip(_genFixBtn,
-            "Потрібен ТІЛЬКИ якщо ви сидите на десктопі/дивитесь SDR-відео з увімкненим HDR:\n" +
-            "виправляє вицвілі тіні SDR-контенту в HDR-режимі. Побічний ефект: трохи темнить\n" +
-            "тіні HDR-ігор. Якщо ви вимикаєте HDR поза іграми (Win+Alt+B) — він вам не потрібен.\n" +
-            "Повторюйте після зміни повзунка SDR-яскравості.");
-        tips.SetToolTip(_genNeutralBtn,
-            "Базовий варіант: жодних корекцій кривої, тільки коректні пік/чорний для ігор\n" +
-            "(це те, що читають ігри через DXGI і autodetect). Максимальна точність HDR «як є».\n" +
-            "Останній встановлений профіль стає активним.");
-        tips.SetToolTip(_nitsBox,
-            "Рівні яскравості (в нітах) для діагностичних колонок нижче.\n" +
-            "Використовується тільки кнопками 'Діагностика'.");
-        tips.SetToolTip(_showBtn,
-            "ДІАГНОСТИКА (не обов'язково). Малює на екрані колонки заданої яскравості\n" +
-            "через HDR-рендер — щоб перевірити, що Windows передає сигнал без спотворень.");
-        tips.SetToolTip(_captureBtn,
-            "ДІАГНОСТИКА (не обов'язково). Знімає екран з відеопам'яті і порівнює,\n" +
-            "що реально відправляється на монітор, з тим, що замовлено кнопкою вище.\n" +
-            "Δ% ≈ 0 — сигнал чистий. Результати (CSV/PNG) — у Документи\\HdrScope-Results.");
-        tips.SetToolTip(_openHdrSettingsBtn,
-            "Відкриває сторінку налаштувань Windows з повзунком «Яскравість вмісту SDR».\n" +
-            "Ціль: 31 (= 204 ніт, студійний стандарт). Рядок статусу вгорі покаже поточне значення.");
+            "12 візуальних тестів (~10 хв): пік яскравості, чорний, градації, гамма, контраст.\n" +
+            "Результати зберігаються в JSON — його можна віддати Claude для аналізу.\n" +
+            "Профілі нижче беруть числа з останньої пройденої сесії.");
+        tips.SetToolTip(_competBtn,
+            "Для ігор (Hunt тощо): підіймає тіні 0–25 ніт у HDR-режимі — програмний Dark Stabilizer.\n" +
+            "Плюс чесний виміряний пік для тонмапера гри. Діє ТІЛЬКИ коли HDR увімкнено;\n" +
+            "на SDR-режим не впливає взагалі. В грі: peak 575, exposure 1.0.");
+        tips.SetToolTip(_accurateBtn,
+            "Максимально точний HDR «як задумано»: жодних змін кривої, тільки ваші виміряні\n" +
+            "пік/чорний (їх читають ігри та Windows). Для фільмів і атмосферних ігор.\n" +
+            "Діє тільки в HDR-режимі. Останній натиснутий HDR-профіль стає активним.");
+        tips.SetToolTip(_sdrBtn,
+            "Описує ваш відкалібрований монітор (заводські праймеріз з EDID, гамма 2.2)\n" +
+            "для звичайного не-HDR режиму. Його використовують color-managed програми\n" +
+            "(браузер, перегляд фото). Кривих не змінює — ваш SDR калібрований у самому моніторі.");
         tips.SetToolTip(_restartHdrBtn,
-            "Вимикає та вмикає HDR (як Win+Alt+B двічі), щоб Windows перечитала колірний профіль.\n" +
-            "Натискайте ПІСЛЯ встановлення профілю. Екран блимне — це нормально.");
-        tips.SetToolTip(_liveStatus,
-            "Живий стан HDR — оновлюється кожні 2 секунди.");
+            "Вимкнути та увімкнути HDR (як Win+Alt+B двічі) — щоб Windows перечитала профіль.\n" +
+            "Профільні кнопки роблять це самі; ця кнопка — про всяк випадок.");
+        tips.SetToolTip(_liveStatus, "Живий стан HDR — оновлюється кожні 2 секунди.");
 
         Controls.Add(_log);
-        Controls.Add(_grid);
-        Controls.Add(_captureBtn);
-        Controls.Add(_showBtn);
-        Controls.Add(_nitsBox);
-        Controls.Add(new Label { Text = "Цільові рівні (ніт), через кому:", Dock = DockStyle.Top, Height = 20 });
-        Controls.Add(_genNeutralBtn);
-        Controls.Add(_genFixBtn);
         Controls.Add(_restartHdrBtn);
-        Controls.Add(_openHdrSettingsBtn);
-        Controls.Add(_genCompetBtn);
+        Controls.Add(_sdrBtn);
+        Controls.Add(_accurateBtn);
+        Controls.Add(_competBtn);
         Controls.Add(_wizardBtn);
-        Controls.Add(_statusBtn);
         Controls.Add(_liveStatus);
-        Controls.Add(_screenCombo);
-        Controls.Add(new Label { Text = "Монітор:", Dock = DockStyle.Top, Height = 20 });
 
-        Load += (_, _) => RefreshStatus();
+        Load += (_, _) =>
+        {
+            Log("HDR-профілі («тіні» / «точний») діють лише при увімкненому HDR (Win+Alt+B).");
+            Log("SDR-режим завжди працює на калібровці самого монітора — профільні LUT його не чіпають.");
+        };
     }
 
     private void Log(string s) => _log.AppendText(s + Environment.NewLine);
 
     private void UpdateLiveStatus()
     {
-        var acs = Interop.AdvancedColorInfo.QueryAll().FirstOrDefault();
+        var acs = AdvancedColorInfo.QueryAll().FirstOrDefault();
         if (acs is null)
         {
             _liveStatus.Text = "Стан дисплея недоступний";
             _liveStatus.ForeColor = System.Drawing.Color.Gray;
             return;
         }
-        bool whiteOk = Math.Abs(acs.SdrWhiteLevelNits - 204) <= 6;
-        string white = $"SDR white: {acs.SdrWhiteLevelNits:F0} nits" + (whiteOk ? " ✓" : " (ціль 204 = повзунок 31)");
         _liveStatus.Text = acs.Enabled
-            ? $"HDR: УВІМКНЕНО ✓  {acs.BitsPerColorChannel}-bit  {white}"
-            : "HDR: ВИМКНЕНО — профіль і тести HDR працюють лише при увімкненому HDR";
-        _liveStatus.ForeColor = acs.Enabled && whiteOk ? System.Drawing.Color.DarkGreen
-            : acs.Enabled ? System.Drawing.Color.DarkOrange
-            : System.Drawing.Color.Firebrick;
+            ? $"HDR: УВІМКНЕНО ✓  {acs.BitsPerColorChannel}-bit  SDR white: {acs.SdrWhiteLevelNits:F0} nits"
+            : "HDR: ВИМКНЕНО — SDR-режим (монітор працює на власній калібровці)";
+        _liveStatus.ForeColor = acs.Enabled ? System.Drawing.Color.DarkGreen : System.Drawing.Color.DarkSlateGray;
     }
 
-    private void RefreshStatus()
+    private (double maxL, double minL) ReadLastSession()
     {
-        _log.Clear();
-        Log("=== Стан Advanced Color / HDR (з Win32 DisplayConfig API) ===");
-        foreach (var st in AdvancedColorInfo.QueryAll())
+        double maxL = 450, minL = 0.05;
+        var lastSession = Directory.GetFiles(_outDir, "session-*.json")
+            .OrderByDescending(f => f).FirstOrDefault();
+        if (lastSession is not null)
         {
-            Log($"Target {st.TargetId}: Supported={st.Supported} Enabled={st.Enabled} " +
-                $"Encoding={st.ColorEncoding} Bits={st.BitsPerColorChannel} SDRWhite={st.SdrWhiteLevelNits:F0} nits " +
-                $"(BT.2408 reference = 203 nits)");
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(lastSession));
+            if (doc.RootElement.TryGetProperty("Conclusions", out var c))
+            {
+                if (c.TryGetProperty("maxTML_nits", out var mx)) maxL = mx.GetDouble();
+                if (c.TryGetProperty("minTML_nits", out var mn)) minL = mn.GetDouble();
+            }
+            Log($"Дані з сесії: {Path.GetFileName(lastSession)} (пік={maxL:F0}, чорний={minL:F3})");
         }
-        Log("");
-        Log("Натисніть «Показати тестові патчі», перетягніть вікно не потрібно — воно саме розгорнеться на обраному моніторі.");
+        else
+        {
+            Log("Сесій не знайдено — типові значення (450 / 0.05). Радимо пройти майстер.");
+        }
+        return (maxL, minL);
     }
-
-    private float[] ParseNits()
-    {
-        return _nitsBox.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(s => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture))
-            .ToArray();
-    }
-
-    private Screen SelectedScreen => Screen.AllScreens[_screenCombo.SelectedIndex];
 
     public enum ProfileMode { GammaFix, Neutral, Competitive }
 
-    private void GenerateFromLastSession(ProfileMode mode)
+    private void GenerateHdrProfile(ProfileMode mode)
     {
         try
         {
-            var lastSession = Directory.GetFiles(_outDir, "session-*.json")
-                .OrderByDescending(f => f).FirstOrDefault();
+            var (maxL, minL) = ReadLastSession();
 
-            double maxL = 450, minL = 0.05;
-            if (lastSession is not null)
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(lastSession));
-                if (doc.RootElement.TryGetProperty("Conclusions", out var c))
-                {
-                    if (c.TryGetProperty("maxTML_nits", out var mx)) maxL = mx.GetDouble();
-                    if (c.TryGetProperty("minTML_nits", out var mn)) minL = mn.GetDouble();
-                }
-                Log($"Дані з сесії: {Path.GetFileName(lastSession)} (maxTML={maxL:F0}, minTML={minL:F3})");
-            }
-            else
-            {
-                Log("Сесій не знайдено — використовую типові значення (450 / 0.05). Радимо пройти майстер.");
-            }
-
-            var acs = Interop.AdvancedColorInfo.QueryAll().FirstOrDefault();
+            var acs = AdvancedColorInfo.QueryAll().FirstOrDefault();
             if (acs is null || !acs.Enabled)
             {
-                Log("ПОМИЛКА: HDR вимкнено. Увімкніть (Win+Alt+B) і повторіть — профіль прив'язаний до поточного SDR white level.");
+                Log("ПОМИЛКА: HDR вимкнено. Увімкніть (Win+Alt+B) і повторіть.");
                 return;
             }
 
             double w = acs.SdrWhiteLevelNits;
-            var edid = Interop.Edid.ReadForMonitor("DELD175") ?? Interop.Edid.ReadForMonitor("DEL");
+            var edid = Edid.ReadForMonitor("DELD175") ?? Edid.ReadForMonitor("DEL");
             var spec = new Color.Mhc2ProfileSpec
             {
                 Description = mode switch
                 {
                     ProfileMode.GammaFix => $"HdrScope G2724D HDR gamma2.2 fix (W={w:F0} peak={maxL:F0})",
                     ProfileMode.Competitive => $"HdrScope G2724D HDR competitive shadow-lift (peak={maxL:F0})",
-                    _ => $"HdrScope G2724D HDR neutral (peak={maxL:F0})",
+                    _ => $"HdrScope G2724D HDR accurate (peak={maxL:F0})",
                 },
                 MinLuminanceNits = minL,
                 MaxLuminanceNits = maxL,
@@ -242,27 +166,25 @@ public sealed class MainForm : Form
             {
                 ProfileMode.GammaFix => "HdrScope-G2724D-gamma22fix.icm",
                 ProfileMode.Competitive => "HdrScope-G2724D-competitive.icm",
-                _ => "HdrScope-G2724D-neutral.icm",
+                _ => "HdrScope-G2724D-accurate.icm",
             };
             string path = Path.Combine(_outDir, name);
             Color.Mhc2IccWriter.Write(path, spec);
-            Log($"Профіль записано: {path} (SDR white = {w:F0} nits)");
+            Log($"Профіль записано: {name}");
 
-            string status = Color.ProfileInstaller.InstallAndAssociateHdr(path, acs.AdapterId, acs.SourceId);
-            Log(status);
+            Log(Color.ProfileInstaller.InstallAndAssociateHdr(path, acs.AdapterId, acs.SourceId));
 
-            Log("Перезапускаю HDR для застосування профілю (екран блимне)...");
+            Log("Перезапускаю HDR (екран блимне)...");
             Application.DoEvents();
-            bool restarted = Interop.AdvancedColorInfo.RestartHdr();
+            bool restarted = AdvancedColorInfo.RestartHdr();
             Log(restarted
                 ? mode switch
                 {
-                    ProfileMode.GammaFix => "✓ Готово. SDR-контент у HDR-режимі має стати контрастнішим у тінях — порівняйте будь-який сайт.",
-                    ProfileMode.Competitive => "✓ Готово. Тіні в HDR-іграх підняті (як Dark Stabilizer). В грі: peak 575, exposure 1.0.",
-                    _ => "✓ Готово. Профіль neutral активний: чесний пік для ігор, без корекцій кривої.",
+                    ProfileMode.Competitive => "✓ Активний профіль: ПІДНЯТІ ТІНІ. В грі: peak 575, exposure 1.0.",
+                    ProfileMode.GammaFix => "✓ Активний профіль: gamma2.2-fix (SDR-контент у HDR-режимі виправлено).",
+                    _ => "✓ Активний профіль: ТОЧНИЙ (без корекцій кривої).",
                 }
-                : "Перезапуск через API не вдався — натисніть Win+Alt+B двічі вручну.");
-            Log("ВАЖЛИВО: якщо зміните повзунок 'SDR content brightness' — натисніть цю кнопку ще раз (LUT прив'язана до рівня).");
+                : "Перезапуск не вдався — натисніть Win+Alt+B двічі вручну.");
         }
         catch (Exception ex)
         {
@@ -270,83 +192,55 @@ public sealed class MainForm : Form
         }
     }
 
-    private void StartWizard()
+    private void GenerateSdrProfile()
     {
-        var session = new Calibration.Session(_outDir);
-        session.Environment["machine"] = Environment.MachineName;
-        session.Environment["os"] = Environment.OSVersion.VersionString;
-        session.Environment["screen"] = SelectedScreen.DeviceName;
-        var wizard = new Calibration.WizardForm(SelectedScreen, MonitorHelper.GetHMonitor(SelectedScreen.Bounds), session);
-        wizard.FormClosed += (_, _) =>
-        {
-            Log($"Сесію калібрування збережено: {session.JsonPath}");
-            Log("Передайте цей JSON Claude для аналізу.");
-        };
-        wizard.Show(this);
-    }
-
-    private void ShowPattern()
-    {
-        _patternForm?.Close();
-        var nits = ParseNits();
-        _patternForm = new PatternForm(SelectedScreen.Bounds, nits);
-        _patternForm.Show();
-        Log($"Показано {nits.Length} патчів на {SelectedScreen.DeviceName}: [{string.Join(", ", nits)}] нит.");
-    }
-
-    private void CaptureAndAnalyze()
-    {
-        if (_patternForm is null || _patternForm.IsDisposed)
-        {
-            MessageBox.Show(this, "Спершу натисніть «Показати тестові патчі».", "HdrScope");
-            return;
-        }
-
         try
         {
-            var hmon = MonitorHelper.GetHMonitor(SelectedScreen.Bounds);
-            Log("Захоплення кадру через Windows.Graphics.Capture (R16G16B16A16Float / scRGB)...");
-            var frame = HdrFrameCapture.CaptureMonitor(hmon);
-            Log($"Кадр захоплено: {frame.Width}x{frame.Height}.");
-
-            var results = HdrAnalyzer.AnalyzePatches(frame, _patternForm.Patches);
-            _grid.DataSource = results.Select(r => new
+            var acs = AdvancedColorInfo.QueryAll().FirstOrDefault();
+            if (acs is null)
             {
-                Target_nits = r.TargetNits,
-                Виміряно_nits = MathF.Round(r.MeanNits, 1),
-                Min = MathF.Round(r.MinNits, 1),
-                Max = MathF.Round(r.MaxNits, 1),
-                StdDev = MathF.Round(r.StdDevNits, 2),
-                Δ_nits = MathF.Round(r.DeltaNits, 1),
-                Δ_percent = MathF.Round(r.DeltaPercent, 1),
-            }).ToList();
+                Log("ПОМИЛКА: не вдалося визначити дисплей.");
+                return;
+            }
 
-            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            var csvPath = Path.Combine(_outDir, $"patches-{stamp}.csv");
-            var pngPath = Path.Combine(_outDir, $"falsecolor-{stamp}.png");
-            var histPath = Path.Combine(_outDir, $"histogram-{stamp}.csv");
+            var edid = Edid.ReadForMonitor("DELD175") ?? Edid.ReadForMonitor("DEL");
+            var spec = new Color.Mhc2ProfileSpec
+            {
+                Description = "HdrScope G2724D SDR (native gamma 2.2, EDID primaries)",
+                IncludeMhc2 = false,
+                RedPrimary = edid?.Red ?? (0.640, 0.330),
+                GreenPrimary = edid?.Green ?? (0.300, 0.600),
+                BluePrimary = edid?.Blue ?? (0.150, 0.060),
+                WhitePoint = edid?.White ?? (0.3127, 0.3290),
+                LumiNits = 300,
+            };
 
-            HdrAnalyzer.SavePatchReportCsv(csvPath, results);
-            float maxNits = MathF.Max(500, results.Max(r => r.TargetNits) * 1.2f);
-            HdrAnalyzer.SaveFalseColorPng(frame, pngPath, maxNits);
-            var hist = HdrAnalyzer.BuildHistogram(frame, 200, maxNits);
-            HdrAnalyzer.SaveHistogramCsv(histPath, hist, maxNits);
+            string path = Path.Combine(_outDir, "HdrScope-G2724D-SDR.icm");
+            Color.Mhc2IccWriter.Write(path, spec);
+            Log("Профіль записано: HdrScope-G2724D-SDR.icm");
 
-            Log($"Збережено: {csvPath}");
-            Log($"Хибнокольорове зображення (nits -> heat LUT): {pngPath}");
-            Log($"Гістограма: {histPath}");
-            Log("");
-            Log("Інтерпретація:");
-            Log(" - Δ_percent близько 0 на низьких рівнях = сигнал коректний.");
-            Log(" - Якщо декілька останніх колонок з РІЗНИМИ Target_nits дають ОДНАКОВЕ Виміряно_nits — це стеля клипінгу (панель або SDR-brightness slider), а не помилка захоплення.");
-            Log(" - StdDev великий всередині одного патча може вказувати на banding/dithering.");
-            Log(" - Це вимірювання СИГНАЛУ (те, що Windows композитить), НЕ реального світла з панелі. Для фотометричної калібровки потрібен колориметр.");
-
-            Process.Start(new ProcessStartInfo { FileName = _outDir, UseShellExecute = true });
+            Log(Color.ProfileInstaller.InstallAndAssociateSdr(path, acs.AdapterId, acs.SourceId));
+            Log("✓ Діє у звичайному (не-HDR) режимі для програм з керуванням кольором. Перезапуск не потрібен.");
         }
         catch (Exception ex)
         {
-            Log("ПОМИЛКА: " + ex);
+            Log("ПОМИЛКА генерації SDR-профілю: " + ex);
         }
+    }
+
+    private void StartWizard()
+    {
+        var screen = Screen.PrimaryScreen!;
+        var session = new Calibration.Session(_outDir);
+        session.Environment["machine"] = Environment.MachineName;
+        session.Environment["os"] = Environment.OSVersion.VersionString;
+        session.Environment["screen"] = screen.DeviceName;
+        var wizard = new Calibration.WizardForm(screen, MonitorHelper.GetHMonitor(screen.Bounds), session);
+        wizard.FormClosed += (_, _) =>
+        {
+            Log($"Сесію калібрування збережено: {Path.GetFileName(session.JsonPath)}");
+            Log("Передайте цей JSON Claude для аналізу.");
+        };
+        wizard.Show(this);
     }
 }

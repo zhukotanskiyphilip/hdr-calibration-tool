@@ -48,4 +48,26 @@ public static class ProfileInstaller
         return "Профіль встановлено і призначено як HDR-профіль за замовчуванням. " +
                "Якщо ефект не видно одразу — вимкніть/увімкніть HDR (Win+Alt+B).";
     }
+
+    /// <summary>Installs and associates a profile for SDR (standard color) mode, set as default.</summary>
+    public static string InstallAndAssociateSdr(string profilePath, Interop.LuidValue adapterId, uint sourceId)
+    {
+        if (!InstallColorProfileW(null, profilePath))
+        {
+            int err = Marshal.GetLastWin32Error();
+            if (err != 80 && err != 183)
+                return $"InstallColorProfile failed (Win32 error {err}).";
+        }
+
+        string fileName = Path.GetFileName(profilePath);
+        int hr = ColorProfileAddDisplayAssociation(
+            WCS_PROFILE_MANAGEMENT_SCOPE.CURRENT_USER, fileName, adapterId, sourceId,
+            setAsDefault: true, associateAsAdvancedColor: false);
+
+        if (hr != 0)
+            return $"Профіль встановлено, але асоціація не вдалася (HRESULT 0x{hr:X8}). " +
+                   "Додайте вручну: colorcpl.exe → Add → Set as Default (без позначки HDR).";
+
+        return "SDR-профіль встановлено як типовий для звичайного (не-HDR) режиму.";
+    }
 }

@@ -9,7 +9,9 @@ public sealed class Mhc2ProfileSpec
 {
     public required string Description { get; init; }
     public double MinLuminanceNits { get; init; } = 0.0;
-    public required double MaxLuminanceNits { get; init; }
+    public double MaxLuminanceNits { get; init; } = 400;
+    /// <summary>False = plain display profile without the MHC2 tag (for SDR association).</summary>
+    public bool IncludeMhc2 { get; init; } = true;
     /// <summary>Regamma LUT in PQ domain, values [0..1]; same LUT applied to R,G,B. Null = identity 2-point.</summary>
     public double[]? RegammaLut { get; init; }
     /// <summary>3x3 color matrix (row-major); null = identity.</summary>
@@ -150,8 +152,8 @@ public static class Mhc2IccWriter
             ("gTRC", trc),
             ("bTRC", trc),
             ("lumi", XyzTag(0, spec.LumiNits, 0)),
-            ("MHC2", Mhc2Tag(spec)),
         };
+        if (spec.IncludeMhc2) tags.Add(("MHC2", Mhc2Tag(spec)));
 
         int headerSize = 128;
         int tagTableSize = 4 + tags.Count * 12;
